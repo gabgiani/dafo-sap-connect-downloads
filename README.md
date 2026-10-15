@@ -17,6 +17,22 @@ DAFO SAP Connect is a gateway that runs on a computer in your network and gives 
 | **Access and audit** | Named access tokens, an activity log, a query monitor with timings, and quarantine for queries that must stop. |
 | **Multiple SAP connections** | One management page for several SAP companies, each on its own MCP port. |
 
+### Online or replicated queries
+
+Each published SAP query chooses how it runs:
+
+- **Online** — every MCP call runs the query in SAP and returns live rows.
+- **Scheduled (replicated)** — the gateway runs an extraction query on a schedule (every N minutes or hours, selected days, a specific date or a cron expression, in your time zone) and stores the complete result in a local SQLite database on that computer. The assistant calls **the same MCP tool** and reads the stored data transparently: SAP is not touched on each question, and every answer states when the data was last extracted.
+
+For scheduled queries, each SQL parameter has a role:
+
+- **Extraction** — a fixed value used when the data is collected (for example *orders posted from 1 January*).
+- **Filter** — removed from the extraction so all matching rows are collected once, then offered to the assistant as a filter over the stored rows (for example *customer code*). It can be required or optional; you review the derived extraction SQL before publishing.
+
+You can add further **local filters** on any result column (equals, not equals, greater/less than, contains; text, number, date or yes/no), so the assistant can ask narrow questions over the collected information without new SAP queries. A new snapshot replaces the previous one only when the extraction completes; if a refresh fails, the last good data stays available with its timestamp, and there is no silent fallback to SAP. **Run query now** refreshes on demand, and the query monitor shows every extraction.
+
+![A replicated query: extraction parameter, MCP filter, schedule and local filters](docs/images/scheduled-query.png)
+
 ### Security by design
 
 - Listens only on `127.0.0.1` — nothing is exposed to the internet or the LAN.
