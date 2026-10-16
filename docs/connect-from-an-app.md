@@ -4,6 +4,8 @@
 
 Applications use the same MCP endpoint, tokens and tools as AI clients. You can drive it with an official MCP SDK or with plain HTTP; no SAP credentials, OData or SQL are needed in your code.
 
+If you build the application with an AI coding assistant, point it at [`llms.txt`](../llms.txt): the same integration contract in one file written for assistants.
+
 Typical uses:
 
 - **An application with its own LLM** — your backend lists the tools, offers them to the model as functions and executes the model's calls through MCP.

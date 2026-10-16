@@ -47,6 +47,14 @@ Start with **How it works**, then follow the guide for your role.
 | [How the AI understands SAP data](docs/how-the-ai-understands-data.md) | SAP specialists, developers | Knowledge cards, interpretation rules, the field dictionary and how the AI learns what each query and column means. |
 | [What's new](docs/whats-new.md) | Everyone | Highlights of the latest release. |
 
+### For AI coding assistants
+
+[`llms.txt`](llms.txt) is a single, self-contained file for AI coding assistants (GitHub Copilot, Claude Code, Cursor, Context7…): constraints, connection, SDK code, tool contracts, errors, pagination and integration recipes. Point your assistant at it when building an application that uses DAFO SAP Connect:
+
+```text
+https://raw.githubusercontent.com/gabgiani/dafo-sap-connect-downloads/main/llms.txt
+```
+
 ## Three ways to read SAP
 
 | Way | MCP tools | Reads from | Best for |

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "DAFO SAP Connect",
+  "description": "Local MCP server that exposes SAP Business One data as read-only tools (Service Layer read tools, online or scheduled SQL queries, multi-step investigations) for AI assistants and applications, over Streamable HTTP on 127.0.0.1 with Bearer access tokens.",
+  "folders": [],
+  "excludeFolders": [],
+  "excludeFiles": [],
+  "rules": [
+    "Connect with Streamable HTTP to http://127.0.0.1:<port>/mcp (default port 50002) using the header Authorization: Bearer <token>; read URL and token from configuration.",
+    "Call the MCP endpoint only from server-side code on the same computer; browser requests with an Origin header are rejected.",
+    "Discover tools with tools/list at runtime; tool names and lookup arguments differ per installation.",
+    "Pass only the arguments declared in each tool's inputSchema; SQL, OData filters and collection names are not accepted.",
+    "Read results from structuredContent; follow has_more and next_skip, and pass snapshot_version when paging scheduled sap_query_* tools.",
+    "Treat isError results and investigation steps with error or skipped as unavailable evidence, never as no records.",
+    "Prefer investigate_* tools over chaining sap_read_* tools manually for multi-step questions."
+  ]
+}
