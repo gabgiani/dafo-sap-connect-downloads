@@ -57,9 +57,9 @@ Claude Desktop's *custom connectors* connect from Anthropic's cloud and cannot r
         "http://127.0.0.1:50002/mcp",
         "--allow-http",
         "--transport", "http-only",
-        "--header", "Authorization:${DAFO_SAP_AUTH}"
+        "--header", "Authorization:${SAP_CONNECT_AUTH_HEADER}"
       ],
-      "env": { "DAFO_SAP_AUTH": "Bearer <access token>" }
+      "env": { "SAP_CONNECT_AUTH_HEADER": "Bearer <access token>" }
     }
   }
 }

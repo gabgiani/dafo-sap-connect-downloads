@@ -1,0 +1,620 @@
+# DAFO SAP Connect: AI integration file
+
+> DAFO SAP Connect is a local gateway that exposes a company's SAP Business One data as read-only MCP (Model Context Protocol) tools. AI assistants and server-side applications on the same computer connect to `http://127.0.0.1:<port>/mcp` with a Bearer access token, discover the tools the SAP administrator published and call them. No SAP credentials, OData or SQL are needed in application code.
+
+Version: 0.1.0-20261015.5
+Verified against source: DAFO SAP Connect 0.1.0-20261015.5 (commit 930644a), 2026-10-16
+Canonical URL: https://raw.githubusercontent.com/gabgiani/dafo-sap-connect-downloads/main/llms-full.txt
+
+## What it enables
+
+- Read SAP Business One records (sales orders, deliveries, invoices, items and warehouse stock, production orders, purchase orders, receipts, business partners, resources and capacity…) from an app or an AI agent, by identifier, without SAP credentials in the app.
+- Answer multi-step business questions with one call: an `investigate_*` tool runs a fixed sequence of related reads on the server (for example production order → material lines → stock of each material) and returns all the evidence with interpretation rules.
+- Run SQL queries saved and reviewed by the SAP administrator, either **online** (live in SAP on every call) or **scheduled** (extracted on an agenda and served from a local snapshot with its extraction time).
+- Give an LLM documented context: guidance cards (`search_sap_knowledge`, `get_sap_knowledge`) and the meaning, type, allowed values and source table of every returned field (`describe_sap_tool_fields`).
+- Know which parts of a result are business records and which topic a tool belongs to, through the `com.dafonet` classification metadata.
+- Use SAP data from DAFO Swarm models (see Working with other DAFO products).
+
+## When to use / when not to use
+
+Use it when:
+
+- The app or agent needs SAP Business One data and runs on the computer where DAFO SAP Connect is installed (desktop app, local agent, backend on that machine).
+- An LLM must read SAP safely: only administrator-published, read-only tools with declared arguments.
+- Repeated or heavy reports should not hit SAP on every request (scheduled queries).
+
+Do not use it when:
+
+- The caller is a browser, a browser extension or a cloud service: the endpoint accepts only loopback requests without an `Origin` header.
+- The app must create or change SAP documents: there are no write tools.
+- The system is SAP ECC or S/4HANA: only SAP Business One Service Layer is supported.
+- The app needs arbitrary queries chosen at runtime: SQL and OData cannot be sent; the SAP administrator must publish a tool.
+
+## Key concepts
+
+- **Connection**: one SAP company (Service Layer URL, company database, integration user). Each connection has its own MCP port, tools, access tokens, activity log and snapshots. The first connection uses port `50002`; additional ones use the port shown in their settings.
+- **Dynamic catalogue**: there are no built-in SAP data tools. The administrator creates, enables, classifies and publishes each tool in the setup page, so tool names and argument names differ between installations. Discover them with `tools/list` at runtime.
+- **Tool families**:
+  - `sap_read_*` — read one Service Layer collection by named lookup keys (exact identifiers). Always live.
+  - `sap_query_*` — run a saved SQL query. Online: live in SAP with declared parameters. Scheduled: reads the latest complete local snapshot, never SAP; its parameters are filters over stored rows.
+  - `investigate_*` — run a fixed path of related reads from one identifier (`start_from` + `identifier`). Always live.
+  - Support tools — `search_sap_knowledge`, `get_sap_knowledge`, `describe_sap_tool_fields`, `list_sap_queries`. They do not read business records.
+- **Publication rules**: a tool is listed only if it is enabled, allowed by the access mode and, when the administrator selected investigations, needed by them. An `investigate_*` tool is listed only when all its read tools are listed. Refresh `tools/list` after configuration changes; disabled tools are rejected even if a client cached them.
+- **Access modes**: *internal* (read tools with customer scope accept an optional `customer_code`; SQL query tools are published) and *fixed customer* (no `customer_code`; only tools with customer scope; no SQL query tools). An access token identifies an application, not an end user.
+- **Evidence semantics**: an empty lookup, a page, a failed call or a skipped investigation step is never proof that SAP has no records. Results state their coverage and limits.
+- **Classification (`com.dafonet`, version 1)**: each tool declares `purpose` (`data` or `internal`) and a topic `category`; each result lists the JSON Pointers of its business records in `dataPaths`.
+
+## Connect
+
+1. The SAP administrator installs DAFO SAP Connect (macOS or Windows installer from https://github.com/gabgiani/dafo-sap-connect-downloads/releases/latest), configures the SAP connection and publishes tools in the setup page at `http://127.0.0.1:50002/`.
+2. The administrator creates an access token for the app: setup → connection gear → **Access tokens** → name → **Create token** → **Copy**. Optional expiry under **Advanced options**. One token per app; revocable; valid only on that connection's port.
+3. The app reads two environment variables:
+
+```env
+SAP_CONNECT_URL=http://127.0.0.1:50002/mcp
+SAP_CONNECT_API_KEY=<access token from SAP Connect setup>
+```
+
+4. Transport: MCP Streamable HTTP, stateless. Every `POST` to `SAP_CONNECT_URL` is self-contained; no `Mcp-Session-Id` is needed. Responses are `application/json`.
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <SAP_CONNECT_API_KEY>` |
+| `Content-Type` | `application/json` |
+| `Accept` | `application/json, text/event-stream` |
+| `Host` | Must be `127.0.0.1:<port>` or `localhost:<port>` (HTTP clients set it from the URL) |
+
+Official SDKs: Python `pip install mcp`; TypeScript `npm install @modelcontextprotocol/sdk`. Plain JSON-RPC 2.0 over HTTP also works.
+
+## Rules for AI assistants
+
+1. MUST read `SAP_CONNECT_URL` and `SAP_CONNECT_API_KEY` from configuration; MUST NOT hard-code, print or log the token, or put it in an LLM prompt.
+2. MUST call SAP Connect only from server-side code on the same computer; MUST NOT call it from browser JavaScript, browser extensions, mobile clients or cloud functions.
+3. MUST NOT put a reverse proxy, tunnel or port forward in front of the MCP port.
+4. MUST discover tools with `tools/list` and check that a tool exists before calling it; MUST NOT hard-code tool names or lookup argument names from examples.
+5. MUST pass only the arguments declared in the tool's `inputSchema` (`additionalProperties: false`); MUST NOT send SQL, OData `$filter`, collection names or undeclared customer codes.
+6. MUST read results from `structuredContent`; the text block is the same JSON and MUST NOT be ingested twice.
+7. MUST follow `has_more` / `next_skip` and, for scheduled queries, pass `snapshot_version` on every page after the first.
+8. MUST treat `isError: true`, investigation steps with `error` or `skipped`, and empty lookups as unavailable evidence, never as "no records".
+9. MUST NOT retry JSON-RPC errors `-32602`, results with `isError: true`, or "SAP is not reachable"; retry only transport failures and HTTP 5xx, at most 3 times with backoff.
+10. MUST show `last_successful_extraction` with data from scheduled queries and `limitations` from investigations.
+11. SHOULD use an `investigate_*` tool instead of chaining `sap_read_*` calls manually for multi-step questions.
+12. SHOULD offer an LLM only the tools of one topic (`category.id`) plus the support tools, and put the server `instructions` from `initialize` in its system prompt.
+13. SHOULD use an HTTP timeout of at least 120 seconds for `tools/call`: online queries with `all_pages` can run up to 90 seconds in SAP.
+14. MUST NOT expect write operations; if a needed tool is missing, tell the user that the SAP administrator must publish it in SAP Connect setup.
+
+## Task → endpoint/tool
+
+| Task | Tool (discover exact name with `tools/list`) | Notes |
+|---|---|---|
+| List what the app may call | `tools/list` | Names, descriptions, schemas, classification |
+| Get usage rules for an LLM | `initialize` → `result.instructions` | Optional handshake |
+| Read one record by identifier | `sap_read_*` with its lookup key | `top` 1–50 |
+| Read documents by a line field (e.g. base document) | `sap_read_*` with a line lookup such as `base_entry` | One page; `skip` not available |
+| Answer a multi-step question | `investigate_*` with `start_from` + `identifier` | Server runs every step |
+| Live list, join or report | Online `sap_query_*` | `top` 1–20, `skip`, `all_pages` |
+| Repeated or heavy report | Scheduled `sap_query_*` | Snapshot; show extraction time |
+| See published queries and parameters | `list_sap_queries` | Internal mode only |
+| Meaning of a field or code | `describe_sap_tool_fields` | Cache by `column_dictionary.id` |
+| Which tool answers a question | `search_sap_knowledge` → `get_sap_knowledge` | Guidance only |
+| Check the gateway is running | `GET /health` | No auth, no SAP data |
+
+## Recipes
+
+### Connect and list tools
+
+Use when: starting any integration; shows the published catalogue and its topics.
+
+```python
+import asyncio
+import os
+
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+URL = os.environ["SAP_CONNECT_URL"]
+HEADERS = {"Authorization": f"Bearer {os.environ['SAP_CONNECT_API_KEY']}"}
+
+
+async def main() -> None:
+    async with streamablehttp_client(URL, headers=HEADERS) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            info = await session.initialize()
+            print(info.instructions)
+            for tool in (await session.list_tools()).tools:
+                meta = (tool.meta or {}).get("com.dafonet/tool-classification") or {}
+                print(tool.name, meta.get("purpose"), (meta.get("category") or {}).get("id"))
+
+
+asyncio.run(main())
+```
+
+```ts
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+export async function connectSap(): Promise<Client> {
+  const transport = new StreamableHTTPClientTransport(new URL(process.env.SAP_CONNECT_URL!), {
+    requestInit: { headers: { Authorization: `Bearer ${process.env.SAP_CONNECT_API_KEY}` } },
+  });
+  const client = new Client({ name: "my-app", version: "1.0.0" });
+  await client.connect(transport);
+  return client;
+}
+
+const client = await connectSap();
+const { tools } = await client.listTools();
+for (const tool of tools) {
+  const meta = (tool._meta?.["com.dafonet/tool-classification"] ?? {}) as { purpose?: string; category?: { id: string } };
+  console.log(tool.name, meta.purpose, meta.category?.id);
+}
+```
+
+```sh
+curl -s "$SAP_CONNECT_URL" \
+  -H "Authorization: Bearer $SAP_CONNECT_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+### Read a record by identifier
+
+Use when: the user gives an order number, item code or customer code and one SAP collection answers it.
+
+```python
+async def read_sales_order(session: ClientSession, doc_entry: str) -> dict:
+    tools = {tool.name for tool in (await session.list_tools()).tools}
+    if "sap_read_sales_orders" not in tools:
+        raise LookupError("Ask the SAP administrator to publish a sales order read tool")
+    result = await session.call_tool("sap_read_sales_orders", {"doc_entry": doc_entry, "top": 1})
+    if result.isError:
+        raise RuntimeError(result.content[0].text)
+    return result.structuredContent
+```
+
+```ts
+const result = await client.callTool({ name: "sap_read_sales_orders", arguments: { doc_entry: "1215", top: 1 } });
+if (result.isError) throw new Error(JSON.stringify(result.content));
+const { rows, has_more, empty_result } = result.structuredContent as ReadResult;
+```
+
+```sh
+curl -s "$SAP_CONNECT_URL" -H "Authorization: Bearer $SAP_CONNECT_API_KEY" \
+  -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sap_read_sales_orders","arguments":{"doc_entry":"1215","top":1}}}'
+```
+
+`sap_read_sales_orders` and `doc_entry` are the names of the knowledge-map template; installations may use other names.
+
+### Run an investigation
+
+Use when: the question needs several related reads, for example whether a production order can be built.
+
+```python
+result = await session.call_tool("investigate_materials", {"start_from": "absolute_entry", "identifier": "154"})
+if result.isError:
+    raise RuntimeError(result.content[0].text)
+data = result.structuredContent
+for step in data["steps"]:
+    if "error" in step or "skipped" in step:
+        print(step["step"], "unavailable:", step.get("error") or step.get("skipped"))
+    else:
+        print(step["step"], step["reader"], step["arguments"], len(step["result"]["rows"]), "rows")
+print("Limitations:", data["limitations"])
+```
+
+```ts
+const tool = tools.find((t) => t.name === "investigate_materials");
+const startFrom = (tool?.inputSchema.properties as any)?.start_from?.enum as string[]; // e.g. ["absolute_entry","item_no","sales_order_doc_entry"]
+const result = await client.callTool({ name: "investigate_materials", arguments: { start_from: startFrom[0], identifier: "154" } });
+const data = result.structuredContent as InvestigationResult;
+```
+
+```sh
+curl -s "$SAP_CONNECT_URL" -H "Authorization: Bearer $SAP_CONNECT_API_KEY" \
+  -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"investigate_materials","arguments":{"start_from":"absolute_entry","identifier":"154"}}}'
+```
+
+### Page through a scheduled query
+
+Use when: a report reads a scheduled `sap_query_*` tool; all pages must come from the same snapshot.
+
+```python
+async def read_snapshot(session: ClientSession, tool: str, filters: dict) -> tuple[list[dict], str]:
+    rows, skip, version = [], 0, None
+    while True:
+        args = {"parameters": filters, "top": 20, "skip": skip}
+        if version:
+            args["snapshot_version"] = version
+        result = await session.call_tool(tool, args)
+        if result.isError:  # "Query not available": no snapshot yet or definition changed
+            raise RuntimeError(result.content[0].text)
+        page = result.structuredContent
+        rows += page["rows"]
+        version = page["snapshot_version"]
+        if not page["has_more"]:
+            return rows, page["last_successful_extraction"]
+        skip = page["next_skip"]
+```
+
+```ts
+async function readSnapshot(client: Client, tool: string, filters: Record<string, unknown>) {
+  const rows: Record<string, unknown>[] = [];
+  let skip = 0;
+  let version: string | undefined;
+  for (;;) {
+    const args: Record<string, unknown> = { parameters: filters, top: 20, skip };
+    if (version) args.snapshot_version = version;
+    const result = await client.callTool({ name: tool, arguments: args });
+    if (result.isError) throw new Error(JSON.stringify(result.content));
+    const page = result.structuredContent as ScheduledQueryResult;
+    rows.push(...page.rows);
+    version = page.snapshot_version;
+    if (!page.has_more) return { rows, extractedAt: page.last_successful_extraction };
+    skip = page.next_skip!;
+  }
+}
+```
+
+If a page fails with a message starting `snapshot_changed`, a new extraction replaced the snapshot: restart from `skip` 0 without `snapshot_version`. Use the same loop for `sap_read_*` with `top` up to 50 and no `parameters` or `snapshot_version`.
+
+### Explain a returned field
+
+Use when: a result contains codes or columns the app or LLM must interpret.
+
+```python
+dictionaries: dict[str, dict] = {}
+
+
+async def explain(session: ClientSession, tool: str, result: dict) -> dict | None:
+    pointer = result.get("column_dictionary") or {}
+    key = pointer.get("id")
+    if key is None:  # dictionary unavailable; pointer["unavailable"] says why
+        return None
+    if key not in dictionaries:
+        described = await session.call_tool("describe_sap_tool_fields", {"tool": tool})
+        if described.isError:
+            return None
+        dictionaries[key] = described.structuredContent
+    return dictionaries[key]
+```
+
+Without `fields`, the whole dictionary of the tool is returned, so it can be cached. The cache key changes when the columns, the SAP metadata copy or the SAP database reference change.
+
+### Let your own LLM use the tools (function calling)
+
+Use when: the app has its own model and should let it choose SAP tools.
+
+```python
+import json
+import os
+
+from openai import AsyncOpenAI  # any function-calling LLM client works the same way
+
+llm = AsyncOpenAI()
+MODEL = os.environ["LLM_MODEL"]
+SUPPORT = {"search_sap_knowledge", "get_sap_knowledge", "describe_sap_tool_fields", "list_sap_queries"}
+
+
+def functions_for(tools, topic: str) -> list[dict]:
+    selected = []
+    for tool in tools:
+        meta = (tool.meta or {}).get("com.dafonet/tool-classification") or {}
+        if tool.name in SUPPORT or (meta.get("category") or {}).get("id") == topic:
+            selected.append({"type": "function", "function": {
+                "name": tool.name, "description": tool.description, "parameters": tool.inputSchema}})
+    return selected
+
+
+async def ask(session: ClientSession, instructions: str, question: str, topic: str) -> str:
+    functions = functions_for((await session.list_tools()).tools, topic)
+    messages = [{"role": "system", "content": instructions}, {"role": "user", "content": question}]
+    for _ in range(8):
+        reply = await llm.chat.completions.create(model=MODEL, messages=messages, tools=functions)
+        message = reply.choices[0].message
+        messages.append(message)
+        if not message.tool_calls:
+            return message.content
+        for call in message.tool_calls:
+            result = await session.call_tool(call.function.name, json.loads(call.function.arguments or "{}"))
+            messages.append({"role": "tool", "tool_call_id": call.id,
+                             "content": result.content[0].text if result.content else ""})
+    return "Stopped after 8 tool rounds."
+```
+
+`instructions` is `InitializeResult.instructions` from `session.initialize()`. Pass `inputSchema` unchanged and do not enable a strict mode that forces every property to be required. Return tool results unchanged, including `interpretation`, `limitations`, `coverage` and `empty_result`.
+
+### Backend endpoint for a web app
+
+Use when: a browser UI needs SAP data; the browser calls the app backend and only the backend calls SAP Connect.
+
+```python
+import os
+
+from fastapi import FastAPI, HTTPException
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+
+app = FastAPI()
+
+
+@app.get("/api/production-orders/{entry}/materials")
+async def materials(entry: str):
+    headers = {"Authorization": f"Bearer {os.environ['SAP_CONNECT_API_KEY']}"}
+    async with streamablehttp_client(os.environ["SAP_CONNECT_URL"], headers=headers) as (read, write, _):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool("investigate_materials",
+                                             {"start_from": "absolute_entry", "identifier": entry})
+    if result.isError:
+        raise HTTPException(status_code=503, detail=result.content[0].text)
+    data = result.structuredContent
+    return {"steps": data["steps"], "failed_steps": data["failed_steps"], "limitations": data["limitations"]}
+```
+
+```ts
+import express from "express";
+
+const app = express();
+app.get("/api/sales-orders/:docEntry", async (req, res) => {
+  const client = await connectSap();
+  try {
+    const result = await client.callTool({ name: "sap_read_sales_orders", arguments: { doc_entry: req.params.docEntry, top: 1 } });
+    if (result.isError) return res.status(503).json({ error: result.content });
+    res.json(result.structuredContent);
+  } finally {
+    await client.close();
+  }
+});
+app.listen(3000, "127.0.0.1");
+```
+
+## Request and response shapes
+
+```ts
+// JSON-RPC 2.0 envelope (POST SAP_CONNECT_URL)
+type RpcRequest =
+  | { jsonrpc: "2.0"; id: number; method: "initialize"; params: { protocolVersion: string; capabilities: {}; clientInfo: { name: string; version: string } } }
+  | { jsonrpc: "2.0"; id: number; method: "tools/list"; params: {} }
+  | { jsonrpc: "2.0"; id: number; method: "tools/call"; params: { name: string; arguments: Record<string, unknown> } };
+type RpcResponse<T> = { jsonrpc: "2.0"; id: number; result: T } | { jsonrpc: "2.0"; id: number; error: { code: number; message: string } };
+
+interface ToolClassification { version: 1; purpose: "data" | "internal"; category: { id: string; label: string } }
+interface SapTool {
+  name: string;                       // sap_read_*, sap_query_*, investigate_*, or a support tool
+  description: string;
+  inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[]; additionalProperties: false };
+  annotations: { readOnlyHint: true };
+  _meta:
+    | { "com.dafonet/tool-classification": ToolClassification }
+    | { "com.dafonet/classification-status": { state: "unclassified"; reason: "administrator_declaration_required" } };
+}
+
+interface CallToolResult<T> {
+  content: { type: "text"; text: string }[]; // JSON mirror of structuredContent, or the error message
+  structuredContent?: T;                    // absent when isError is true
+  isError: boolean;
+  _meta: { "com.dafonet/result-classification": { version: 1; dataPaths: string[] } }; // JSON Pointers; [] for support tools and errors
+}
+
+interface ColumnDictionaryPointer { tool: "describe_sap_tool_fields"; id: string | null; unavailable?: string }
+interface Interpretation { card: string; version: string; steps: string[]; cannot_conclude: string[] }
+type Row = Record<string, unknown>; // line lists appear as arrays, e.g. DocumentLines: Row[]
+
+interface ReadResult {               // sap_read_*
+  tool: string; entity: string; customer_code: string | null;
+  rows: Row[]; has_more: boolean; next_skip?: number | null;
+  coverage: "bounded_query"; nested_limit: 50; nested_truncations: unknown[]; note: string;
+  empty_result?: string; interpretation?: Interpretation; column_dictionary: ColumnDictionaryPointer;
+}
+
+interface OnlineQueryResult {        // online sap_query_* through Service Layer
+  rows: Row[]; rows_returned: number; pages_retrieved: number; page_size: number; all_pages: boolean;
+  has_more: boolean; next_skip: number | null; complete: boolean; truncation_reason: string | null;
+  coverage: "complete_query" | "bounded_query"; note: string; column_dictionary: ColumnDictionaryPointer;
+}
+
+interface ScheduledQueryResult {     // scheduled sap_query_*
+  tool: string; sql_code: string; source: "local_cache"; status: "ready";
+  parameters: Record<string, unknown>; extraction_parameters: Record<string, unknown>;
+  rows: Row[]; matching_rows: number; has_more: boolean; next_skip: number | null; complete: boolean;
+  snapshot_version: string; snapshot_rows: number; snapshot_complete: true;
+  last_successful_extraction: string; extraction_started_at: string; column_dictionary: ColumnDictionaryPointer;
+}
+
+interface InvestigationStep {
+  step: string; reader: string; arguments?: Record<string, string>;
+  result?: Omit<ReadResult, "interpretation" | "column_dictionary">; error?: string; skipped?: string;
+}
+interface InvestigationResult {      // investigate_*
+  investigation: string; question: string; input: Record<string, string>;
+  steps: InvestigationStep[]; failed_steps: number;
+  interpretation: Record<string, Interpretation>; limitations: string[]; coverage: string; answer_with: string;
+}
+
+interface KnowledgeSearch { package: string; version: string; matches: { id: string; title: string; question: string; evidence_status: string }[] }
+interface KnowledgeCard { package: string; version: string; policy: string; card: Record<string, unknown>; relationships: Record<string, unknown>[]; tool_available?: boolean }
+interface QueryList { queries: { tool: string; sql_code: string; backend: "service_layer" | "di_api"; description: string; parameters: unknown[]; execution_mode: "online" | "scheduled" }[]; note: string }
+```
+
+Tool arguments:
+
+```ts
+type ReadArgs = { [lookupKey: string]: string | number } & { top?: number /* 1-50, default 5 */; skip?: number; customer_code?: string /* internal mode, tools with customer scope */ };
+type OnlineQueryArgs = { parameters?: Record<string, string | number | boolean> /* all declared ones required; dates YYYY-MM-DD */; top?: number /* 1-20 */; skip?: number; all_pages?: boolean };
+type ScheduledQueryArgs = { parameters?: Record<string, string | number | boolean> /* filters; required ones per schema */; top?: number /* 1-20 */; skip?: number; snapshot_version?: string /* required when skip > 0 */; all_pages?: boolean };
+type InvestigateArgs = { start_from: string /* enum in schema */; identifier: string };
+type DescribeArgs = { tool: string /* enum in schema */; fields?: string[] /* 1-200 */ };
+type SearchKnowledgeArgs = { query: string; top?: number /* 1-5 */ };
+type GetKnowledgeArgs = { id: string };
+```
+
+## Errors and retries
+
+| Signal | Meaning | Action |
+|---|---|---|
+| HTTP 401 | Missing, wrong, revoked or expired token, or token of another connection | Do not retry; ask for a valid token |
+| HTTP 403 | `Host` is not `127.0.0.1:<port>`/`localhost:<port>`, or an `Origin` header was sent | Do not retry; call from server-side code on the same computer |
+| HTTP 404 | The port does not belong to a running connection | Do not retry; check the port in setup |
+| HTTP 413 | Request body over 2 MiB | Do not retry; send less |
+| HTTP 5xx, connection refused, timeout | Transport failure | Retry up to 3 times with backoff |
+| JSON-RPC `-32602` | Invalid arguments; the message lists the accepted ones and says "do not repeat the same call" | Do not retry; fix the arguments |
+| JSON-RPC internal error (`…too large`) | Result over 64 KiB | Lower `top` or paginate |
+| `isError: true`, "SAP is not reachable…" | SAP unreachable; nothing was read | Do not retry; report unavailable evidence |
+| `isError: true`, "could not sign in to SAP…" | SAP credentials or permissions | Do not retry; the administrator must fix the connection |
+| `isError: true`, "Query not available…" | Scheduled query without a valid snapshot | Do not retry; the administrator runs **Run query now** |
+| `snapshot_changed` | Snapshot replaced while paging | Restart paging from `skip` 0 |
+
+```python
+import os
+import time
+
+import httpx
+
+URL = os.environ["SAP_CONNECT_URL"]
+HEADERS = {
+    "Authorization": f"Bearer {os.environ['SAP_CONNECT_API_KEY']}",
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream",
+}
+
+
+class SapConnectError(Exception):
+    pass
+
+
+def rpc(method: str, params: dict, attempts: int = 3) -> dict:
+    body = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    for attempt in range(attempts):
+        try:
+            response = httpx.post(URL, headers=HEADERS, json=body, timeout=120)
+        except httpx.TransportError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(2 ** attempt)
+            continue
+        if response.status_code >= 500 and attempt < attempts - 1:
+            time.sleep(2 ** attempt)
+            continue
+        response.raise_for_status()
+        message = response.json()
+        if "error" in message:  # -32602 and other JSON-RPC errors are never retried
+            raise SapConnectError(message["error"]["message"])
+        return message["result"]  # check result["isError"] for unavailable evidence
+    raise SapConnectError("unreachable")
+```
+
+```ts
+export async function rpc(method: string, params: Record<string, unknown>, attempts = 3): Promise<any> {
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method, params });
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(process.env.SAP_CONNECT_URL!, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SAP_CONNECT_API_KEY}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body,
+        signal: AbortSignal.timeout(120_000),
+      });
+    } catch (error) {
+      if (attempt === attempts - 1) throw error;
+      await new Promise((r) => setTimeout(r, 2 ** attempt * 1000));
+      continue;
+    }
+    if (response.status >= 500 && attempt < attempts - 1) {
+      await new Promise((r) => setTimeout(r, 2 ** attempt * 1000));
+      continue;
+    }
+    if (!response.ok) throw new Error(`SAP Connect HTTP ${response.status}`);
+    const message = await response.json();
+    if (message.error) throw new Error(message.error.message); // never retried
+    return message.result; // check result.isError for unavailable evidence
+  }
+}
+```
+
+## Limits
+
+| Item | Limit |
+|---|---|
+| `sap_read_*` page | `top` 1–50 (default 5); up to 50 entries per nested line list |
+| `sap_query_*` page | `top` 1–20 (default 5) |
+| `all_pages` (online Service Layer) and scheduled extraction | 16 MiB, 1,000 pages, 90 seconds; check `complete` and `truncation_reason` |
+| DI API query tools | First page only, up to 20 rows; no `skip` or `all_pages` |
+| `investigate_*` | Up to 10 lookups per step; the rest is reported as `skipped` |
+| MCP result | 64 KiB per call; 16 MiB with `all_pages` |
+| Request body | 2 MiB |
+| Definitions per connection | 30 read tools, 30 query tools |
+| Concurrent SAP operations | 2 per connection; scheduled extractions run one at a time per gateway |
+
+## Security
+
+- Listens only on `127.0.0.1`; requests with another `Host` or any `Origin` header are rejected. There is no remote or public access.
+- Every MCP request is authenticated with a named, revocable access token scoped to one SAP connection; tokens are stored in the macOS Keychain or with Windows DPAPI.
+- The activity log records token name, MCP method, tool name, HTTP status and duration — never arguments or returned data.
+- All tools are read-only. SAP applies the integration user's authorizations and data ownership on every live read.
+- The SAP Service Layer certificate is pinned (SHA-256) between SAP Connect and SAP during setup; MCP clients use loopback HTTP and never handle that certificate.
+- Scheduled query results are stored in a private SQLite database per connection on the gateway computer; online results are not stored.
+- An access token identifies an application, not an end user; fixed-customer mode restricts tools to one customer but is not a guest login.
+
+## Working with other DAFO products
+
+**DAFO Swarm** serves language models from the user's own machines through an OpenAI-compatible API (`SWARM_URL`, default `http://127.0.0.1:43100`, key `SWARM_API_KEY`). **DAFO SAP Connect** exposes a company's SAP Business One data as read-only MCP tools (`SAP_CONNECT_URL`, default `http://127.0.0.1:50002/mcp`, key `SAP_CONNECT_API_KEY`). An app uses them together by asking Swarm's `/v1/responses` to call SAP Connect as an MCP server: the model chooses the SAP tools, Swarm calls them and returns the answer with every call.
+
+Requirements:
+- The Swarm coordinator and SAP Connect run on the **same computer**: SAP Connect accepts only loopback connections (`127.0.0.1` or `localhost`), rejects any `Origin` header and has no remote access. Each additional SAP company has its own port, always with the path `/mcp`.
+- Your app calls Swarm from its backend, never from a browser.
+- `authorization` is the SAP Connect access token **without** the `Bearer ` prefix; Swarm adds it. The token is created in SAP Connect Setup → connection → Access tokens and is valid only for that connection's port.
+- `require_approval` must be `"never"`. Limit `allowed_tools` to one topic (`category.id` such as `inventory`, `purchasing`, `sales`, `production`, `resources`) plus the support tools `search_sap_knowledge`, `get_sap_knowledge`, `describe_sap_tool_fields` and, in internal mode, `list_sap_queries`. Tool names depend on each installation: list them with MCP `tools/list` and never hard-code them.
+
+```http
+POST {SWARM_URL}/v1/responses
+Authorization: Bearer {SWARM_API_KEY}
+Content-Type: application/json
+
+{
+  "model": "<id from GET /v1/models>",
+  "input": "Can production order 154 be built? Separate confirmed values from what cannot be concluded.",
+  "max_tool_calls": 8,
+  "tools": [{
+    "type": "mcp",
+    "server_label": "sap",
+    "server_url": "http://127.0.0.1:50002/mcp",
+    "authorization": "<SAP_CONNECT_API_KEY>",
+    "allowed_tools": ["search_sap_knowledge", "get_sap_knowledge", "describe_sap_tool_fields", "investigate_materials"],
+    "require_approval": "never"
+  }]
+}
+```
+
+The response's `output` lists `mcp_list_tools`, one `mcp_call` per SAP call (with `arguments` and `output` or `error`) and the final `message`. Not verified: this combined request end-to-end against a live SAP Connect installation.
+
+Classification contract (`com.dafonet`, version 1): SAP Connect marks each tool with `_meta["com.dafonet/tool-classification"] = {"version": 1, "purpose": "data" | "internal", "category": {"id", "label"}}` and each result with `_meta["com.dafonet/result-classification"] = {"version": 1, "dataPaths": [<exact JSON Pointers>]}`; `dataPaths` is empty for internal tools and errors. `structuredContent` equals the JSON of the text block, so ingest it once. A tool without classification carries `_meta["com.dafonet/classification-status"]` and stays callable. In the Swarm dashboard chat and Microsoft Teams (agents with SAP Connect registered in Settings → MCP servers), only the `dataPaths` of `purpose: "data"` tools become citable evidence (`[E1]`) and SQLite tables of the conversation workspace; internal tools, errors and unclassified results do not. Through `/v1/responses` there is no workspace: your app receives each call's output in `mcp_call`.
+
+Do not retry SAP Connect results with `isError: true`, JSON-RPC error `-32602` or "SAP is not reachable": they mean the evidence is unavailable; report it instead of repeating the call.
+
+## Endpoint index
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| POST | `/mcp` | Bearer access token | MCP JSON-RPC: `initialize`, `tools/list`, `tools/call` |
+| GET | `/health` | None | `{"status":"ok","version":"0.1.0","sap_configured":true}`; no SAP data |
+| GET | `/` on port 50002 | Administrator sign-in (browser) | Setup page; not for applications |
+| GET | `/` on other connection ports | None | Redirects to that connection's setup on port 50002 |
+
+The setup API under `/setup/api/` requires an administrator browser session with CSRF protection; access tokens are rejected there and applications must not use it.
+
+## Version notes
+
+- 0.1.0-20261015.5: no hard-coded SAP data tools — `get_sales_order`, `list_sales_orders`, `list_production_orders` and `search_customers` were removed; use the published `sap_read_*` tools (templates such as `sap_read_sales_orders`, `sap_read_customers`, `sap_read_production_overview`). `investigate_*` is published only when all its read tools are published. `describe_sap_tool_fields` returns administrator field meanings (`source: "administrator"`).
+- 0.1.0-20261014.5: all SAP connections are administered on port 50002; each keeps its own MCP port.
+- 0.1.0-20261014.1: scheduled query tools return `isError` with "Query not available…" when no valid snapshot exists, instead of an empty result.
+- 0.1.0-20261013.x: scheduled queries served from local snapshots (`snapshot_version`, `last_successful_extraction`); query Filter parameters can be optional; `com.dafonet` tool and result classification (version 1); query monitor and quarantine.
+- 0.1.0-20261012.x: several SAP connections, each with its own MCP port; named, revocable access tokens per connection and an activity log; every MCP request is authenticated.
+- Documentation 2026-10-16: standard environment variables `SAP_CONNECT_URL` (full MCP URL) and `SAP_CONNECT_API_KEY`.

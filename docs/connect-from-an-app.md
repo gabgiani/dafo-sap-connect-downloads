@@ -4,7 +4,7 @@
 
 Applications use the same MCP endpoint, tokens and tools as AI clients. You can drive it with an official MCP SDK or with plain HTTP; no SAP credentials, OData or SQL are needed in your code.
 
-If you build the application with an AI coding assistant, point it at [`llms.txt`](../llms.txt): the same integration contract in one file written for assistants.
+If you build the application with an AI coding assistant, point it at [`llms-full.txt`](../llms-full.txt): the same integration contract in one file written for assistants.
 
 Typical uses:
 
@@ -31,11 +31,11 @@ Create a dedicated token for the application under the connection's **Access tok
 Read the token without leaving it in the shell history:
 
 ```sh
-read -rs DAFO_SAP_TOKEN && export DAFO_SAP_TOKEN
-MCP=http://127.0.0.1:50002/mcp
+read -rs SAP_CONNECT_API_KEY && export SAP_CONNECT_API_KEY
+export SAP_CONNECT_URL=http://127.0.0.1:50002/mcp
 rpc() {
-  curl -s "$MCP" \
-    -H "Authorization: Bearer $DAFO_SAP_TOKEN" \
+  curl -s "$SAP_CONNECT_URL" \
+    -H "Authorization: Bearer $SAP_CONNECT_API_KEY" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
     -d "$1"
@@ -81,8 +81,8 @@ import os
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
-URL = "http://127.0.0.1:50002/mcp"
-HEADERS = {"Authorization": f"Bearer {os.environ['DAFO_SAP_TOKEN']}"}
+URL = os.environ.get("SAP_CONNECT_URL", "http://127.0.0.1:50002/mcp")
+HEADERS = {"Authorization": f"Bearer {os.environ['SAP_CONNECT_API_KEY']}"}
 
 
 async def main() -> None:
@@ -122,8 +122,8 @@ npm install @modelcontextprotocol/sdk
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
-const transport = new StreamableHTTPClientTransport(new URL("http://127.0.0.1:50002/mcp"), {
-  requestInit: { headers: { Authorization: `Bearer ${process.env.DAFO_SAP_TOKEN}` } },
+const transport = new StreamableHTTPClientTransport(new URL(process.env.SAP_CONNECT_URL ?? "http://127.0.0.1:50002/mcp"), {
+  requestInit: { headers: { Authorization: `Bearer ${process.env.SAP_CONNECT_API_KEY}` } },
 });
 const client = new Client({ name: "my-sap-app", version: "1.0.0" });
 await client.connect(transport);

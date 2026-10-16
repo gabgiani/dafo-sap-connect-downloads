@@ -6,12 +6,13 @@
   "excludeFolders": [],
   "excludeFiles": [],
   "rules": [
-    "Connect with Streamable HTTP to http://127.0.0.1:<port>/mcp (default port 50002) using the header Authorization: Bearer <token>; read URL and token from configuration.",
+    "Read SAP_CONNECT_URL (full MCP URL, default http://127.0.0.1:50002/mcp) and SAP_CONNECT_API_KEY from configuration and send Authorization: Bearer <SAP_CONNECT_API_KEY> over Streamable HTTP.",
     "Call the MCP endpoint only from server-side code on the same computer; browser requests with an Origin header are rejected.",
     "Discover tools with tools/list at runtime; tool names and lookup arguments differ per installation.",
     "Pass only the arguments declared in each tool's inputSchema; SQL, OData filters and collection names are not accepted.",
     "Read results from structuredContent; follow has_more and next_skip, and pass snapshot_version when paging scheduled sap_query_* tools.",
     "Treat isError results and investigation steps with error or skipped as unavailable evidence, never as no records.",
+    "Retry only transport failures and HTTP 5xx, at most 3 times; never retry JSON-RPC -32602, isError results or 'SAP is not reachable'.",
     "Prefer investigate_* tools over chaining sap_read_* tools manually for multi-step questions."
   ]
 }

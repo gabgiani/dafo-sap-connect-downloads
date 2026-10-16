@@ -49,11 +49,13 @@ Start with **How it works**, then follow the guide for your role.
 
 ### For AI coding assistants
 
-[`llms.txt`](llms.txt) is a single, self-contained file for AI coding assistants (GitHub Copilot, Claude Code, Cursor, Context7…): constraints, connection, SDK code, tool contracts, errors, pagination and integration recipes. Point your assistant at it when building an application that uses DAFO SAP Connect:
+[`llms-full.txt`](llms-full.txt) is a single, self-contained file for AI coding assistants (GitHub Copilot, Claude Code, Cursor, Context7…): what the product enables, how to connect, rules, recipes in Python, TypeScript and curl, request and response shapes, errors, limits, and how to use it together with DAFO Swarm. Point your assistant at it when building an application that uses DAFO SAP Connect:
 
 ```text
-https://raw.githubusercontent.com/gabgiani/dafo-sap-connect-downloads/main/llms.txt
+https://raw.githubusercontent.com/gabgiani/dafo-sap-connect-downloads/main/llms-full.txt
 ```
+
+[`llms.txt`](llms.txt) is the short index in the [llmstxt.org](https://llmstxt.org) format, and [`context7.json`](context7.json) configures indexing in Context7.
 
 ## Three ways to read SAP
 
