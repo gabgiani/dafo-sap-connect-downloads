@@ -1,71 +1,68 @@
 # DAFO SAP Connect
 
-**Connect SAP Business One to your AI assistant — read-only, local and under the administrator's control.**
+**Connect SAP Business One to AI assistants and applications through MCP — read-only, local and under the administrator's control.**
 
-DAFO SAP Connect is a gateway that runs on a computer in your network and gives AI chat clients such as **DAFO Swarm** access to SAP Business One data through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). The assistant can only call the tools an administrator has created and switched on; SAP applies the integration user's own authorizations on every call.
+DAFO SAP Connect is a gateway that runs on a computer in your network. It publishes SAP Business One data as tools of a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server, so AI chat clients such as **DAFO Swarm**, desktop assistants and your own applications read SAP through one controlled interface. The AI can only call the tools an administrator has created and switched on; SAP applies the integration user's own authorizations on every call.
 
 ![Explore the knowledge map with live SAP data](docs/images/knowledge-map-result.png)
 
-## What it does
+## How it fits together
 
-| Area | What you get |
-|---|---|
-| **Read tools** | Turn any SAP Service Layer collection (orders, items, production orders, business partners…) into an MCP tool. Choose the fields returned to the chat, the lookup keys the assistant may pass, fixed filters and customer scope. Every tool can be edited, disabled or classified — there are no hidden, hard-coded data tools. |
-| **SAP queries** | Publish saved queries as MCP tools: draft new SQL with the AI **Generator** (checked against the SAP database reference before anything is saved), reuse **Service Layer** SQLQueries, or run **Query Manager** queries exactly as saved through the optional DI API bridge. Queries can run online or on a schedule, served from a local snapshot. |
-| **Knowledge map** | A curated map of how SAP manufacturing data connects (customers, sales, production, materials, stock, purchases, resources, capacity), with the evidence for each relationship. Explore it with live SAP data from any box. |
-| **Investigations** | Multi-step `investigate_*` tools that run a fixed sequence of reads, so a small model cannot skip a step. |
-| **Access and audit** | Named access tokens, an activity log, a query monitor with timings, and quarantine for queries that must stop. |
-| **Multiple SAP connections** | One management page for several SAP companies, each on its own MCP port. |
+```mermaid
+flowchart LR
+    subgraph Clients["MCP clients on the same computer"]
+        AI["AI chat client<br/>(DAFO Swarm, Claude Desktop, VS Code…)"]
+        APP["Your application<br/>(Python, TypeScript, any HTTP client)"]
+    end
+    subgraph Gateway["DAFO SAP Connect · 127.0.0.1"]
+        MCP["MCP endpoint /mcp<br/>one port per SAP company"]
+        TOOLS["Published tools<br/>read tools · SAP queries · investigations<br/>knowledge · field dictionary"]
+        CACHE[("Local snapshots<br/>scheduled queries")]
+        ADMIN["Setup page<br/>administrator only"]
+    end
+    SL["SAP Business One<br/>Service Layer"]
+    DI["Optional Windows<br/>DI API bridge"]
+    AI -- "Bearer token" --> MCP
+    APP -- "Bearer token" --> MCP
+    MCP --> TOOLS
+    TOOLS -- "online reads" --> SL
+    TOOLS -- "Query Manager" --> DI
+    TOOLS -- "scheduled reads" --> CACHE
+    CACHE -. "extraction on schedule" .-> SL
+    ADMIN -. "configures" .-> TOOLS
+```
 
-### Online or replicated queries
+## Documentation
 
-Each published SAP query chooses how it runs:
+Start with **How it works**, then follow the guide for your role.
 
-- **Online** — every MCP call runs the query in SAP and returns live rows.
-- **Scheduled (replicated)** — the gateway runs an extraction query on a schedule (every N minutes or hours, selected days, a specific date or a cron expression, in your time zone) and stores the complete result in a local SQLite database on that computer. The assistant calls **the same MCP tool** and reads the stored data transparently: SAP is not touched on each question, and every answer states when the data was last extracted.
+| Guide | For | What it covers |
+|---|---|---|
+| [How it works](docs/concepts.md) | Everyone | Architecture, the tool families, connections and ports, access modes, what is published to the AI and the limits. |
+| [Connect an AI client](docs/connect-ai-client.md) | Administrators | Access tokens, MCP URL, DAFO Swarm, Claude Desktop, VS Code and other MCP clients, which tools to enable, troubleshooting. |
+| [Use the MCP server from an application](docs/connect-from-an-app.md) | Developers | The protocol on the wire, `curl`, Python and TypeScript examples, reading results, errors, pagination and integration patterns. |
+| [Tool reference](docs/tool-reference.md) | Developers, administrators | Every tool family: arguments, result fields, limits and examples. |
+| [Online or scheduled queries](docs/online-vs-scheduled.md) | SAP specialists | When a query must run live in SAP and when it should be extracted on a schedule and served from a local snapshot; parameter roles and filters. |
+| [Organizing SAP information for the AI](docs/sap-specialist-guide.md) | SAP specialists | Topics, read tools, lookup keys, relationships and investigations; why the AI is not given every endpoint and how it never skips a related read. |
+| [How the AI understands SAP data](docs/how-the-ai-understands-data.md) | SAP specialists, developers | Knowledge cards, interpretation rules, the field dictionary and how the AI learns what each query and column means. |
+| [What's new](docs/whats-new.md) | Everyone | Highlights of the latest release. |
 
-For scheduled queries, each SQL parameter has a role:
+## Three ways to read SAP
 
-- **Extraction** — a fixed value used when the data is collected (for example *orders posted from 1 January*).
-- **Filter** — removed from the extraction so all matching rows are collected once, then offered to the assistant as a filter over the stored rows (for example *customer code*). It can be required or optional; you review the derived extraction SQL before publishing.
+| Way | MCP tools | Reads from | Best for |
+|---|---|---|---|
+| **API read tools** | `sap_read_*` | Service Layer collections (orders, items, production orders, business partners…), live on every call | Looking up records by an identifier: an order, an item, a customer |
+| **SAP queries** | `sap_query_*` | Saved SQL (Generator, Service Layer SQLQueries or Query Manager), **online** in SAP or **scheduled** into a local snapshot | Joins, lists and history that a single collection cannot answer |
+| **Investigations** | `investigate_*` | A fixed sequence of read tools run by the gateway, step by step | Questions that always need several related reads, such as *can this production order be built?* |
 
-You can add further **local filters** on any result column (equals, not equals, greater/less than, contains; text, number, date or yes/no), so the assistant can ask narrow questions over the collected information without new SAP queries. A new snapshot replaces the previous one only when the extraction completes; if a refresh fails, the last good data stays available with its timestamp, and there is no silent fallback to SAP. **Run query now** refreshes on demand, and the query monitor shows every extraction.
+Support tools — `search_sap_knowledge`, `get_sap_knowledge`, `describe_sap_tool_fields` and `list_sap_queries` — give the AI guidance and field meanings without reading business records.
 
-![A replicated query: extraction parameter, MCP filter, schedule and local filters](docs/images/scheduled-query.png)
-
-### Security by design
+## Security by design
 
 - Listens only on `127.0.0.1` — nothing is exposed to the internet or the LAN.
 - MCP tools only read SAP data. SAP query definitions are written to SAP only when the administrator saves them in setup.
 - The SAP server certificate is pinned during setup. Access tokens are kept in the macOS Keychain or Windows DPAPI; on Windows the SAP password is also DPAPI-encrypted.
-- The administrator signs in to the setup page; MCP clients use their own named, revocable tokens.
-
-## What's new in 0.1.0-20261015.5
-
-### Explore the knowledge map from any box
-
-Click any box of the map — a customer, a sales order, a production order, an item — choose the field to search by and enter a value. The gateway reads that box and follows every relationship it can execute, **forwards and backwards**. Each box opens in its own window, placed and connected exactly like the map, with the records SAP returned and expandable line details. Relationships not yet validated on real data are drawn dashed. If a box has no data, its window says why: no read tool, nothing to follow, a failed read or no executable relationship.
-
-![Choose a box, a field and a value](docs/images/knowledge-map-explore.png)
-
-### A clearer SAP query Generator
-
-The Generator now works in three steps — **Describe the query**, **Review the SQL and save it in SAP**, **Test and publish**. Progress, checks and SAP messages appear next to the buttons you just used, the action bar stays visible while you scroll, and the SQL is not shown twice after saving.
-
-![Review the generated SQL before saving it in SAP](docs/images/generator-review.png)
-
-### Field meanings for the assistant
-
-When choosing the fields of a read tool, each field shows its meaning from the SAP database reference (REFDB) or the SAP user-field definition. Administrators can confirm or write their own meanings; the assistant receives them through `describe_sap_tool_fields`.
-
-![Field meanings while choosing the fields of a read tool](docs/images/read-tool-field-meanings.png)
-
-### Also in this release
-
-- Every data tool is an administrator-managed read tool; investigations are published only when all their read tools exist.
-- SAP authorization guidance for integration users, including authorization groups and data ownership, and a clear *Read permitted · 0 rows* result when SAP hides records from the user.
-
-*Screenshots use sample data.*
+- The administrator signs in to the setup page; MCP clients use their own named, revocable tokens, and every call is recorded in the activity log without its arguments.
 
 ## Download
 
@@ -82,7 +79,7 @@ Both need network access to the SAP Business One **Service Layer** (`/b1s/v1/` o
 shasum -a 256 -c dafo-sap-connect-<version>-macos-arm64.pkg.sha256
 ```
 
-After installing, open the setup page at `http://127.0.0.1:50002/`, sign in as administrator, configure the SAP connection and create an access token for your chat client.
+After installing, open the setup page at `http://127.0.0.1:50002/`, sign in as administrator, configure the SAP connection and create an access token for your chat client — see [Connect an AI client](docs/connect-ai-client.md).
 
 ---
 
