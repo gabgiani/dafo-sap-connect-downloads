@@ -2,8 +2,8 @@
 
 > DAFO SAP Connect is a local gateway that exposes a company's SAP Business One data as read-only MCP (Model Context Protocol) tools. AI assistants and server-side applications on the same computer connect to `http://127.0.0.1:<port>/mcp` with a Bearer access token, discover the tools the SAP administrator published and call them. No SAP credentials, OData or SQL are needed in application code.
 
-Version: 0.1.0-20261015.5
-Verified against source: DAFO SAP Connect 0.1.0-20261015.5 (commit 930644a), 2026-10-16
+Version: 0.1.0-20261016.2
+Verified against source: DAFO SAP Connect 0.1.0-20261016.2 (commit 4abdbc2), 2026-10-17
 Canonical URL: https://raw.githubusercontent.com/gabgiani/dafo-sap-connect-downloads/main/llms-full.txt
 
 ## What it enables
@@ -40,7 +40,8 @@ Do not use it when:
   - `investigate_*` — run a fixed path of related reads from one identifier (`start_from` + `identifier`). Always live.
   - Support tools — `search_sap_knowledge`, `get_sap_knowledge`, `describe_sap_tool_fields`, `list_sap_queries`. They do not read business records.
 - **Publication rules**: a tool is listed only if it is enabled, allowed by the access mode and, when the administrator selected investigations, needed by them. An `investigate_*` tool is listed only when all its read tools are listed. Refresh `tools/list` after configuration changes; disabled tools are rejected even if a client cached them.
-- **Access modes**: *internal* (read tools with customer scope accept an optional `customer_code`; SQL query tools are published) and *fixed customer* (no `customer_code`; only tools with customer scope; no SQL query tools). An access token identifies an application, not an end user.
+- **Access modes**: *internal* (read tools with customer scope accept an optional `customer_code`; SQL query tools are published) and *fixed customer* (no `customer_code`; only tools with customer scope; only SQL query tools whose customer scope the administrator declared, with the customer applied by the server). An access token identifies an application, not an end user.
+- **Data-agnostic tools**: entities, fields, queries, keys and customer scope are defined by the administrator. Read them from `tools/list` and the results; never assume fixed entities or fields.
 - **Evidence semantics**: an empty lookup, a page, a failed call or a skipped investigation step is never proof that SAP has no records. Results state their coverage and limits.
 - **Classification (`com.dafonet`, version 1)**: each tool declares `purpose` (`data` or `internal`) and a topic `category`; each result lists the JSON Pointers of its business records in `dataPaths`.
 
@@ -74,7 +75,7 @@ Official SDKs: Python `pip install mcp`; TypeScript `npm install @modelcontextpr
 4. MUST discover tools with `tools/list` and check that a tool exists before calling it; MUST NOT hard-code tool names or lookup argument names from examples.
 5. MUST pass only the arguments declared in the tool's `inputSchema` (`additionalProperties: false`); MUST NOT send SQL, OData `$filter`, collection names or undeclared customer codes.
 6. MUST read results from `structuredContent`; the text block is the same JSON and MUST NOT be ingested twice.
-7. MUST follow `has_more` / `next_skip` and, for scheduled queries, pass `snapshot_version` on every page after the first.
+7. MUST follow `has_more` / `next_skip` and, for scheduled queries, pass `snapshot_version` on every page after the first. To verify a full `sap_read_*` load, compare the loaded rows with `total_count` from the first page and check duplicates by `record_key`; if `total_count` is null, report coverage as not verified.
 8. MUST treat `isError: true`, investigation steps with `error` or `skipped`, and empty lookups as unavailable evidence, never as "no records".
 9. MUST NOT retry JSON-RPC errors `-32602`, results with `isError: true`, or "SAP is not reachable"; retry only transport failures and HTTP 5xx, at most 3 times with backoff.
 10. MUST show `last_successful_extraction` with data from scheduled queries and `limitations` from investigations.
@@ -407,6 +408,9 @@ interface ReadResult {               // sap_read_*
   tool: string; entity: string; customer_code: string | null;
   rows: Row[]; has_more: boolean; next_skip?: number | null;
   coverage: "bounded_query"; nested_limit: 50; nested_truncations: unknown[]; note: string;
+  record_key: string[];              // primary key fields from the SAP metadata, on every page
+  total_count?: number | null;       // first page only (skip 0): records SAP counts for the same filters
+  total_count_error?: string;        // why SAP could not count; never replaced by another figure
   empty_result?: string; interpretation?: Interpretation; column_dictionary: ColumnDictionaryPointer;
 }
 
@@ -414,6 +418,7 @@ interface OnlineQueryResult {        // online sap_query_* through Service Layer
   rows: Row[]; rows_returned: number; pages_retrieved: number; page_size: number; all_pages: boolean;
   has_more: boolean; next_skip: number | null; complete: boolean; truncation_reason: string | null;
   coverage: "complete_query" | "bounded_query"; note: string; column_dictionary: ColumnDictionaryPointer;
+  customer_code?: string;            // customer-scoped queries: the customer every row was checked against
 }
 
 interface ScheduledQueryResult {     // scheduled sap_query_*
@@ -443,7 +448,7 @@ Tool arguments:
 
 ```ts
 type ReadArgs = { [lookupKey: string]: string | number } & { top?: number /* 1-50, default 5 */; skip?: number; customer_code?: string /* internal mode, tools with customer scope */ };
-type OnlineQueryArgs = { parameters?: Record<string, string | number | boolean> /* all declared ones required; dates YYYY-MM-DD */; top?: number /* 1-20 */; skip?: number; all_pages?: boolean };
+type OnlineQueryArgs = { parameters?: Record<string, string | number | boolean> /* all declared ones required; dates YYYY-MM-DD; a customer-scoped parameter is absent in fixed mode and optional in internal mode */; top?: number /* 1-20 */; skip?: number; all_pages?: boolean };
 type ScheduledQueryArgs = { parameters?: Record<string, string | number | boolean> /* filters; required ones per schema */; top?: number /* 1-20 */; skip?: number; snapshot_version?: string /* required when skip > 0 */; all_pages?: boolean };
 type InvestigateArgs = { start_from: string /* enum in schema */; identifier: string };
 type DescribeArgs = { tool: string /* enum in schema */; fields?: string[] /* 1-200 */ };
@@ -612,6 +617,7 @@ The setup API under `/setup/api/` requires an administrator browser session with
 
 ## Version notes
 
+- 0.1.0-20261016.2: `sap_read_*` results carry `record_key` (primary key from the SAP metadata) and, on the first page, `total_count` counted by SAP (`total_count_error` when SAP refuses the count). Optional customer scope for `sap_query_*`: in fixed-customer mode only scoped queries are published, the server applies the customer and checks every returned row (`customer_code` in the result). Reader descriptions state that they return one page. Server instructions are data-agnostic.
 - 0.1.0-20261015.5: no hard-coded SAP data tools — `get_sales_order`, `list_sales_orders`, `list_production_orders` and `search_customers` were removed; use the published `sap_read_*` tools (templates such as `sap_read_sales_orders`, `sap_read_customers`, `sap_read_production_overview`). `investigate_*` is published only when all its read tools are published. `describe_sap_tool_fields` returns administrator field meanings (`source: "administrator"`).
 - 0.1.0-20261014.5: all SAP connections are administered on port 50002; each keeps its own MCP port.
 - 0.1.0-20261014.1: scheduled query tools return `isError` with "Query not available…" when no valid snapshot exists, instead of an empty result.

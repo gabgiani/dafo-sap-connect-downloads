@@ -194,7 +194,7 @@ Results report whether more data exists. Continue with the same arguments plus t
 
 | Tool | Page size | Continue with | Notes |
 |---|---|---|---|
-| `sap_read_*` | `top` 1–50 (default 5) | `skip = next_skip` while `has_more` is `true` | Lookups on line fields return one bounded page; `skip` is not available for them. |
+| `sap_read_*` | `top` 1–50 (default 5); SAP may return fewer per page | `skip = next_skip` while `has_more` is `true` | Lookups on line fields return one bounded page; `skip` is not available for them. To check a full load, compare the loaded rows with `total_count` from the first page and look for duplicates by `record_key`. |
 | Online `sap_query_*` (Service Layer) | `top` 1–20 (default 5) | `skip = next_skip`, or `all_pages: true` | Check `complete` and `truncation_reason`: `all_pages` stops at 16 MiB, 1,000 pages or 90 seconds and can be resumed. |
 | `sap_query_*` through the DI API bridge | First page, up to 20 rows | — | `skip` and `all_pages` are not supported. |
 | Scheduled `sap_query_*` | `top` 1–20, or `all_pages: true` | `skip = next_skip` **and** `snapshot_version` from the first page | If a new snapshot replaced the old one, the call fails with `snapshot_changed`: restart from `skip` 0. |

@@ -4,6 +4,21 @@
 
 Release notes for every version are on the [releases page](https://github.com/gabgiani/dafo-sap-connect-downloads/releases).
 
+## 0.1.0-20261016.2
+
+### Complete loads you can verify
+
+Every read tool result now carries `record_key`, the collection's primary key from the SAP metadata, and the first page carries `total_count`, the number of records SAP counts for the same filters and lookups. A client that loads all pages can check that it received every record and no duplicates. DAFO Swarm's `workspace_load` does this automatically; on the demo company it loaded 1,225 of 1,225 sales orders in 62 pages with no duplicates. If SAP cannot count, the result says why instead of giving a figure.
+
+### Customer scope for SAP queries
+
+In **MCP publication**, the administrator can declare which text parameter of a query receives the customer code and which result column returns it. Fixed-customer connections then publish that query too: the server applies the connection's customer, rejects a caller-supplied value and checks every returned row, on every page. Publication is refused unless the reviewed SQL filters with `column = :parameter`, combined with AND, without UNION, CTEs or subqueries, and with explicit joins.
+
+### Also in this release
+
+- Read tool descriptions state that they return one page, so assistants load every record with a full load instead of stopping at the first page. Read tools accept 1–50 records per page; SAP may return fewer.
+- Server instructions are data-agnostic: assistants must not assume fixed entities or fields and must ask for a missing data definition. SAP-specific interpretation rules stay in the knowledge cards of the standard investigation paths.
+
 ## 0.1.0-20261015.5
 
 ### Explore the knowledge map from any box

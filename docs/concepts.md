@@ -79,7 +79,8 @@ Each connection runs in one of two modes, set in its connection settings.
 | Intended for | Your own staff | A single customer's view |
 | Read tools with a customer field | Accept an optional `customer_code`; omitted means the configured default customer | Always use the configured customer; `customer_code` is rejected |
 | Read tools without a customer field | Published | Hidden and rejected |
-| SAP queries and `list_sap_queries` | Published | Hidden and rejected (a query has no enforced customer scope) |
+| SAP queries | Published | Only queries with a customer scope declared by the administrator; the server applies the configured customer and checks every returned row |
+| `list_sap_queries` | Published | Hidden and rejected |
 | Investigations | Published when ready | Published only if all their read tools have customer scope |
 
 Neither mode is a guest login: an access token identifies a client application, not a customer user.

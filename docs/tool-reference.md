@@ -48,7 +48,7 @@ Explains the fields or columns a data tool returns: SAP type, documented descrip
 
 ## `sap_read_*` — API read tools
 
-Each read tool reads one SAP Service Layer collection with the fields, lookup keys, fixed filters and customer scope saved by the administrator. Its description names the collection and the accepted lookups.
+Each read tool reads one SAP Service Layer collection with the fields, lookup keys, fixed filters and customer scope saved by the administrator. Its description names the collection and the accepted lookups, and states that it returns one page.
 
 | Argument | Type | Rules |
 |---|---|---|
@@ -70,6 +70,8 @@ Each read tool reads one SAP Service Layer collection with the fields, lookup ke
   "has_more": false,
   "next_skip": null,
   "coverage": "bounded_query",
+  "record_key": ["DocEntry"],
+  "total_count": 1,
   "nested_limit": 50,
   "nested_truncations": [],
   "note": "Administrator-selected scalar leaves only. …",
@@ -81,14 +83,17 @@ Each read tool reads one SAP Service Layer collection with the fields, lookup ke
 | Result field | Meaning |
 |---|---|
 | `rows` | Records with the selected fields; line fields grouped under their list (`DocumentLines`, `ProductionOrderLines`…) in their original order |
-| `has_more`, `next_skip` | More records exist; continue with `skip` |
+| `has_more`, `next_skip` | More records exist; continue with `skip`. SAP may return fewer records than `top` per page |
 | `coverage` | `bounded_query`: a page, never proof of complete coverage |
+| `record_key` | The collection's primary key fields, from the SAP metadata; use them to detect duplicates across pages |
+| `total_count` | First page only (`skip` 0): how many records SAP counts for the same filters and lookups. It is a separate count, not a snapshot of the pages |
+| `total_count_error` | Present with `total_count: null` when SAP could not count; no substitute figure is given |
 | `nested_truncations` | Line lists cut at 50 entries |
 | `empty_result` | Present when a lookup found nothing: explains that only this exact lookup is empty (an item code is not a resource code, a document number is not an internal entry) |
 | `interpretation` | Rules for reading this result, from the knowledge package, when a card exists for this tool |
 | `column_dictionary` | Pointer to the field dictionary |
 
-A lookup on a line field (for example `base_entry` on `DocumentLines/BaseEntry`) returns, for each document, only the matching lines, newest first, bounded to 50 lines; `skip` is not available for it.
+A lookup on a line field (for example `base_entry` on `DocumentLines/BaseEntry`) returns, for each document, only the matching lines, newest first, bounded to 50 lines; `skip` and `total_count` are not available for it.
 
 ## `list_sap_queries`
 
@@ -107,7 +112,9 @@ For scheduled queries, `parameters` lists the filters over the stored rows. SQL 
 
 ## `sap_query_*` — SAP queries
 
-A saved SQL query published by the administrator (internal mode only). Its description contains the administrator's description, the SAP query code and how it runs.
+A saved SQL query published by the administrator. Its description contains the administrator's description, the SAP query code, its customer scope and how it runs.
+
+Without a customer scope a query is published in internal mode only. When the administrator declares a customer scope (a text parameter and the result column that returns the customer), the query is also published in fixed-customer mode: the parameter disappears from the schema, the server applies the connection's customer, every returned row must contain that customer in the declared column, and the result carries `customer_code`. In internal mode the scoped parameter is optional and defaults to the configured customer.
 
 ### Online queries
 

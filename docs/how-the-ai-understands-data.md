@@ -106,7 +106,9 @@ A model may skip the knowledge tools. So every read tool result for which a card
 - `coverage` — every step ran, each bounded; failed or skipped steps are unavailable evidence;
 - `answer_with` — use every step; separate confirmed values, possible risks, what cannot be concluded and the next checks.
 
-Read results also carry `coverage: bounded_query`, `has_more`, `nested_truncations` and, when a lookup returns nothing, `empty_result`: *this proves only that this exact lookup found nothing; an item code is not a resource code, a document number is not an internal entry.*
+Read results also carry `coverage: bounded_query`, `has_more`, `nested_truncations`, `record_key` (the primary key from the SAP metadata), `total_count` on the first page (how many records SAP counts for the same filters) and, when a lookup returns nothing, `empty_result`: *this proves only that this exact lookup found nothing; an item code is not a resource code, a document number is not an internal entry.*
+
+The server instructions sent at `initialize` are data-agnostic: the assistant must not assume fixed entities or fields, must read the metadata, and must ask the user when a data definition is missing. Interpretation rules for specific SAP data live in the knowledge cards.
 
 ## The field dictionary
 
